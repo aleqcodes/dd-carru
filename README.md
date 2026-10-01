@@ -2,6 +2,12 @@
 
 Editor local de carrosséis do Instagram, com até 10 slides de 1080 × 1350 px. Abra `index.html` no navegador para importar imagens/vídeos, ajustar o enquadramento e exportar PNGs, MP4s ou um ZIP.
 
+## Formatos de imagem
+
+O editor aceita imagens JPG/JPEG, PNG, WebP, HEIC e HEIF como slides. Na primeira importação HEIC/HEIF, baixa sob demanda o conversor `heic2any` pela internet e converte a foto para PNG no próprio navegador. O arquivo convertido é usado na prévia, no salvamento local e na exportação; a foto não é enviada a um servidor. Conexão com a internet é necessária apenas para carregar o conversor na primeira vez. Imagens com múltiplas fotos no mesmo arquivo HEIC não são aceitas.
+
+Overlays continuam aceitando PNG, JPG/JPEG e WebP.
+
 ## Qualidade de vídeo
 
 O encode de navegador usa H.264 `libx264`, preset `veryfast`, CRF 18 e áudio AAC a 128 kbit/s. CRF 18 prioriza qualidade visual; os MP4s podem ficar maiores e demorar mais que o perfil anterior.
