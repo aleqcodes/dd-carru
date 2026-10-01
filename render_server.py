@@ -111,15 +111,19 @@ def build_ffmpeg_args(job: dict, encoder: str) -> list[str]:
             f"[base][ov]overlay={int(overlay['x'])}:{int(overlay['y'])}:shortest=1:format=auto[v]"
         )
         label = "[v]"
+    args.extend(["-filter_complex", base, "-map", label])
+    if not config.get("muteAudio", False):
+        args.extend(["-map", "0:a?"])
     args.extend([
-        "-filter_complex", base,
-        "-map", label, "-map", "0:a?",
         "-t", f"{config['trimEnd'] - config['trimStart']:.3f}",
         "-c:v", encoder, *encoder_options(encoder),
         "-pix_fmt", "yuv420p", "-profile:v", "high",
-        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-        str(job["output"]),
     ])
+    if config.get("muteAudio", False):
+        args.append("-an")
+    else:
+        args.extend(["-c:a", "aac", "-b:a", "128k"])
+    args.extend(["-movflags", "+faststart", str(job["output"])])
     return args
 
 
@@ -265,6 +269,9 @@ class Handler(SimpleHTTPRequestHandler):
             config["height"] = finite_number(config, "height", OUTPUT_HEIGHT, 30000)
             config["cropX"] = finite_number(config, "cropX", 0, 30000)
             config["cropY"] = finite_number(config, "cropY", 0, 30000)
+            if not isinstance(config.get("muteAudio", False), bool):
+                raise ValueError("A opção de mutar áudio precisa ser booleana.")
+            config["muteAudio"] = config.get("muteAudio", False)
             if config["trimEnd"] <= config["trimStart"]:
                 raise ValueError("O fim do corte precisa ser posterior ao início.")
             extension = config.get("extension", "").lower()

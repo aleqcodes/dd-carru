@@ -16,6 +16,8 @@ Selecione a camada **Overlay** para arrastar sua imagem no slide, ou informe val
 
 O encode de navegador usa H.264 `libx264`, preset `veryfast`, CRF 18 e áudio AAC a 128 kbit/s. CRF 18 prioriza qualidade visual; os MP4s podem ficar maiores e demorar mais que o perfil anterior.
 
+No painel de cada vídeo, **Mutar áudio na exportação** remove a faixa de áudio do MP4 daquele slide. Por padrão, o áudio original continua incluído; a prévia do editor permanece silenciosa.
+
 ## Renderização usando a GPU
 
 `index.html` sozinho roda FFmpeg.wasm no navegador e codifica pela CPU; uma página aberta por `file://` não pode invocar NVENC ou AMF do sistema. Para usar encoders nativos, inicie o helper local:
