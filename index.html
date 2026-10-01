@@ -201,6 +201,7 @@ function removeSlide(slide){stopVideos();project.slides.splice(project.slides.in
 function reorderSlides(from,to){if(from===to)return;const index=project.slides.findIndex(s=>s.id===from),target=project.slides.findIndex(s=>s.id===to);if(index<0||target<0)return;const [slide]=project.slides.splice(index,1);project.slides.splice(target,0,slide);renderSlides();renderInspector();}
 function renderSlides(){
   const rail=$('rail');
+  ensureOverlayTransformControls();
   for(const vid of rail.querySelectorAll('video')){vid.pause();vid.removeAttribute('src');vid.load();}
   rail.replaceChildren();
   $('slide-count').textContent=`${String(project.slides.length).padStart(2,'0')} / 10`;
@@ -297,15 +298,73 @@ function renderSlides(){
   });
 }
 function updateSlideVisual(slide){const card=$('rail').querySelector(`.card[data-id="${slide.id}"]`);if(!card)return;const factor=card.querySelector('.frame').clientWidth/CONFIG.SLIDE_WIDTH,media=card.querySelector('.media'),t=getMediaTransform(slide);Object.assign(media.style,{left:`${t.x*factor}px`,top:`${t.y*factor}px`,width:`${t.width*factor}px`,height:`${t.height*factor}px`});const ov=card.querySelector('.overlay-image'),outline=card.querySelector('.overlay-outline');if(ov){ov.style.display=slide.overlay.enabled?'block':'none';outline.style.display=slide.overlay.enabled?'block':'none';if(slide.overlay.enabled){const p=getOverlayTransform(slide);for(const el of [ov,outline])Object.assign(el.style,{left:`${p.x*factor}px`,top:`${p.y*factor}px`,width:`${p.width*factor}px`,height:`${p.height*factor}px`});}} }
+function ensureOverlayTransformControls(){
+  if($('overlay-transform-controls')){updateOverlayFields(selected());return;}
+  const controls=document.createElement('div');
+  controls.id='overlay-transform-controls';
+  controls.innerHTML='<label class="checkbox" style="margin:14px 0 8px"><input id="overlay-apply-all" type="checkbox"> Editar todos os slides juntos</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:0 10px"><label class="field" for="overlay-x">X (px)<input id="overlay-x" type="number" step="1" style="display:block;width:100%;margin-top:6px;background:#101114;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:9px"></label><label class="field" for="overlay-y">Y (px)<input id="overlay-y" type="number" step="1" style="display:block;width:100%;margin-top:6px;background:#101114;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:9px"></label><label class="field" for="overlay-width">Largura (px)<input id="overlay-width" type="number" min="1" step="1" style="display:block;width:100%;margin-top:6px;background:#101114;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:9px"></label><label class="field" for="overlay-height">Altura (px)<input id="overlay-height" type="number" min="1" step="1" style="display:block;width:100%;margin-top:6px;background:#101114;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:9px"></label></div>';
+  $('overlay-note').after(controls);
+  const hint=document.createElement('p');
+  hint.id='overlay-controls-hint';
+  hint.className='hint';
+  controls.append(hint);
+  controls.addEventListener('change',event=>{
+    const slide=selected();
+    if(!slide||!project.overlaySource)return;
+    if(event.target.id==='overlay-apply-all'){
+      if(event.target.checked)applyOverlayTransform(slide,slide.overlay);
+      scheduleProjectSave();
+      return;
+    }
+    const transform={...slide.overlay},source=project.overlaySource;
+    if(!Number.isFinite(+event.target.value)||event.target.value===''){updateOverlayFields(slide);return;}
+    if(event.target.id==='overlay-x')transform.x=Math.round(+event.target.value);
+    else if(event.target.id==='overlay-y')transform.y=Math.round(+event.target.value);
+    else if(event.target.id==='overlay-width'||event.target.id==='overlay-height'){
+      const value=Math.max(1,+event.target.value),dimension=event.target.id==='overlay-width'?source.width:source.height,base=overlayBaseScale();
+      transform.scale=Math.min(5,Math.max(.1,value/(dimension*base)))*base;
+    }else return;
+    applyOverlayTransform(slide,transform);
+    scheduleProjectSave();
+  });
+  updateOverlayFields(selected());
+}
+function updateOverlayFields(slide){
+  const controls=$('overlay-transform-controls');
+  if(!controls)return;
+  const source=project.overlaySource,active=!!(slide&&source);
+  controls.hidden=!source;
+  for(const id of ['overlay-x','overlay-y','overlay-width','overlay-height'])$(id).disabled=!active;
+  $('overlay-apply-all').disabled=!active;
+  $('overlay-controls-hint').textContent=source?'Posição e tamanho em pixels (1080 × 1350); a proporção do overlay é preservada.':'Adicione uma imagem de overlay para usar estes controles.';
+  if(!active)return;
+  const transform=getOverlayTransform(slide);
+  $('overlay-x').value=String(transform.x);
+  $('overlay-y').value=String(transform.y);
+  $('overlay-width').value=String(transform.width);
+  $('overlay-height').value=String(transform.height);
+  $('overlay-width').max=String(Math.round(source.width*overlayBaseScale()*5));
+  $('overlay-height').max=String(Math.round(source.height*overlayBaseScale()*5));
+}
+function applyOverlayTransform(slide,transform){
+  const targets=$('overlay-apply-all')?.checked?project.slides:[slide];
+  for(const target of targets){
+    target.overlay.x=transform.x;
+    target.overlay.y=transform.y;
+    target.overlay.scale=transform.scale;
+    updateSlideVisual(target);
+  }
+  updateOverlayFields(slide);
+}
 function stopVideos(){for(const video of $('rail').querySelectorAll('video'))video.pause();for(const slide of project.slides)slide.previewTrim=false;}
-function selectSlide(id){if(project.selectedId===id)return;stopVideos();project.selectedId=id;project.layer='media';for(const card of $('rail').querySelectorAll('.card')){const active=Number(card.dataset.id)===id;card.classList.toggle('selected',active);card.classList.remove('overlay-edit');const video=card.querySelector('video');if(video)video.preload=active?'metadata':'none';}renderInspector();}
+function selectSlide(id){if(project.selectedId===id)return;stopVideos();project.selectedId=id;project.layer='media';for(const card of $('rail').querySelectorAll('.card')){const active=Number(card.dataset.id)===id;card.classList.toggle('selected',active);card.classList.remove('overlay-edit');const video=card.querySelector('video');if(video)video.preload=active?'metadata':'none';}renderInspector();updateOverlayFields(selected());}
 function renderInspector(){if(projectReady)scheduleProjectSave();const slide=selected(),hasOverlay=!!project.overlaySource;$('no-selection').hidden=!!slide;$('inspector-body').classList.toggle('hidden',!slide);$('inspector-title').textContent=slide?`Slide ${String(project.slides.indexOf(slide)+1).padStart(2,'0')}`:'Nenhum slide';$('inspector-type').textContent=slide?(slide.type==='video'?'VÍDEO':'IMAGEM'):'—';if(!slide)return;$('source-name').textContent=slide.file.name;$('layer-overlay').disabled=!hasOverlay;$('layer-media').classList.toggle('selected',project.layer==='media');$('layer-overlay').classList.toggle('selected',project.layer==='overlay');$('layer-hint').textContent=project.layer==='overlay'?'Arraste no quadro para mover o overlay.':'Arraste no quadro para mover a mídia.';const overlay=project.layer==='overlay';const base=overlay?overlayBaseScale():coverScale(slide);const t=overlay?slide.overlay:slide.transform;$('zoom').min=overlay?'0.1':'1';$('zoom').value=String(Math.min(CONFIG.MAX_SCALE,Math.max(+($('zoom').min),t.scale/base)));$('zoom-label').textContent=(t.scale/base).toFixed(2)+'×';$('position').textContent=`X ${Math.round(t.x)} · Y ${Math.round(t.y)}`;$('fit').textContent=overlay?'Tamanho original':'Preencher';$('overlay-enabled').disabled=!hasOverlay;$('overlay-enabled').checked=hasOverlay&&slide.overlay.enabled;$('overlay-note').textContent=hasOverlay?project.overlaySource.file.name+' · posição independente por slide':'Adicione uma imagem de overlay para usá-la em todos os slides.';$('video-section').hidden=slide.type!=='video';if(slide.type==='video'){const v=slide.video;for(const id of ['trim-start','trim-end']){$(id).min='0';$(id).max=String(v.duration);$(id).step='0.01';}$('trim-start').value=String(v.trimStart);$('trim-end').value=String(v.trimEnd);$('start-label').textContent=v.trimStart.toFixed(2)+'s';$('end-label').textContent=v.trimEnd.toFixed(2)+'s';$('trim-summary').textContent=`Duração selecionada: ${(v.trimEnd-v.trimStart).toFixed(2)} s`;$('video-duration').textContent=formatTime(v.duration);updateVideoButton();}for(const card of $('rail').querySelectorAll('.card'))card.classList.toggle('overlay-edit',project.layer==='overlay');}
 function updateVideoButton(){const slide=selected();if(!slide||slide.type!=='video')return;const video=$('rail').querySelector(`.card[data-id="${slide.id}"] video`);$('play-video').textContent=video&&!video.paused?'⏸ Pausar':'▶ Reproduzir';$('video-time').textContent=`${formatTime(video?.currentTime||0)} / ${formatTime(slide.video.duration)}`;}
 function onVideoTime(slide,video){if(slide.previewTrim&&video.currentTime>=slide.video.trimEnd-.04){video.pause();slide.previewTrim=false;}if(selected()?.id===slide.id)updateVideoButton();}
 function handlePointerDown(e,slide,frame){if(e.button!==0)return;if(project.selectedId!==slide.id)selectSlide(slide.id);const overlay=project.layer==='overlay'&&project.overlaySource&&slide.overlay.enabled;const t=overlay?getOverlayTransform(slide):getMediaTransform(slide);const rect=frame.getBoundingClientRect();if(overlay){const x=(e.clientX-rect.left)*CONFIG.SLIDE_WIDTH/rect.width,y=(e.clientY-rect.top)*CONFIG.SLIDE_WIDTH/rect.width;if(x<t.x||y<t.y||x>t.x+t.width||y>t.y+t.height)return;}drag={id:slide.id,overlay,startX:e.clientX,startY:e.clientY,x:t.x,y:t.y,width:rect.width,pointer:e.pointerId};frame.setPointerCapture(e.pointerId);e.preventDefault();}
-function handlePointerMove(e){if(!drag||drag.pointer!==e.pointerId)return;const slide=selected();if(!slide||slide.id!==drag.id)return;const t=drag.overlay?slide.overlay:slide.transform;t.x=Math.round(drag.x+(e.clientX-drag.startX)*CONFIG.SLIDE_WIDTH/drag.width);t.y=Math.round(drag.y+(e.clientY-drag.startY)*CONFIG.SLIDE_WIDTH/drag.width);if(!drag.overlay)bounds(t,slide.sourceWidth,slide.sourceHeight);updateSlideVisual(slide);$('position').textContent=`X ${t.x} · Y ${t.y}`;}
+function handlePointerMove(e){if(!drag||drag.pointer!==e.pointerId)return;const slide=selected();if(!slide||slide.id!==drag.id)return;const t=drag.overlay?slide.overlay:slide.transform;t.x=Math.round(drag.x+(e.clientX-drag.startX)*CONFIG.SLIDE_WIDTH/drag.width);t.y=Math.round(drag.y+(e.clientY-drag.startY)*CONFIG.SLIDE_WIDTH/drag.width);if(drag.overlay)applyOverlayTransform(slide,t);else{bounds(t,slide.sourceWidth,slide.sourceHeight);updateSlideVisual(slide);}$('position').textContent=`X ${t.x} · Y ${t.y}`;}
 function handlePointerUp(e){if(drag?.pointer===e.pointerId){drag=null;scheduleProjectSave();}}
-function changeZoom(multiplier){const slide=selected();if(!slide)return;const ov=project.layer==='overlay';if(ov&&!project.overlaySource)return;const t=ov?slide.overlay:slide.transform,base=ov?overlayBaseScale():coverScale(slide),min=ov?.1:1;const oldW=ov?project.overlaySource.width*t.scale:slide.sourceWidth*t.scale,oldH=ov?project.overlaySource.height*t.scale:slide.sourceHeight*t.scale;const cx=t.x+oldW/2,cy=t.y+oldH/2;t.scale=base*Math.min(CONFIG.MAX_SCALE,Math.max(min,multiplier));const newW=(ov?project.overlaySource.width:slide.sourceWidth)*t.scale,newH=(ov?project.overlaySource.height:slide.sourceHeight)*t.scale;t.x=Math.round(cx-newW/2);t.y=Math.round(cy-newH/2);if(!ov)bounds(t,slide.sourceWidth,slide.sourceHeight);updateSlideVisual(slide);renderInspector();}
+function changeZoom(multiplier){const slide=selected();if(!slide)return;const ov=project.layer==='overlay';if(ov&&!project.overlaySource)return;const t=ov?slide.overlay:slide.transform,base=ov?overlayBaseScale():coverScale(slide),min=ov?.1:1;const oldW=ov?project.overlaySource.width*t.scale:slide.sourceWidth*t.scale,oldH=ov?project.overlaySource.height*t.scale:slide.sourceHeight*t.scale;const cx=t.x+oldW/2,cy=t.y+oldH/2;t.scale=base*Math.min(CONFIG.MAX_SCALE,Math.max(min,multiplier));const newW=(ov?project.overlaySource.width:slide.sourceWidth)*t.scale,newH=(ov?project.overlaySource.height:slide.sourceHeight)*t.scale;t.x=Math.round(cx-newW/2);t.y=Math.round(cy-newH/2);if(ov)applyOverlayTransform(slide,t);else{bounds(t,slide.sourceWidth,slide.sourceHeight);updateSlideVisual(slide);}renderInspector();}
 function updateTrim(kind,value){const slide=selected();if(!slide||slide.type!=='video')return;const v=slide.video,step=Math.min(.01,v.duration/2);if(kind==='start')v.trimStart=Math.min(+value,v.trimEnd-step);else v.trimEnd=Math.max(+value,v.trimStart+step);slide.previewTrim=false;const video=$('rail').querySelector(`.card[data-id="${slide.id}"] video`);if(video){video.pause();video.currentTime=v.trimStart;}const chip=$('rail').querySelector(`.card[data-id="${slide.id}"] .media-chip`);chip.textContent=`VIDEO · ${(v.trimEnd-v.trimStart).toFixed(1)}s`;renderInspector();}
 async function previewTrim(){
   const slide=selected();
@@ -668,9 +727,9 @@ $('layer-overlay').onclick=()=>{if(!project.overlaySource)return;project.layer='
 $('zoom').oninput=e=>changeZoom(+e.target.value);
 $('zoom-minus').onclick=()=>changeZoom(+$('zoom').value-.1);
 $('zoom-plus').onclick=()=>changeZoom(+$('zoom').value+.1);
-$('fit').onclick=()=>{const slide=selected();if(!slide)return;if(project.layer==='overlay'){slide.overlay.scale=overlayBaseScale();}else fitMedia(slide);updateSlideVisual(slide);renderInspector();};
-$('center').onclick=()=>{const slide=selected();if(!slide)return;if(project.layer==='overlay'){const t=getOverlayTransform(slide);slide.overlay.x=Math.round((CONFIG.SLIDE_WIDTH-t.width)/2);slide.overlay.y=Math.round((CONFIG.SLIDE_HEIGHT-t.height)/2);}else centerMedia(slide);updateSlideVisual(slide);renderInspector();};
-$('reset').onclick=()=>{const slide=selected();if(!slide)return;if(project.layer==='overlay')resetOverlay(slide);else fitMedia(slide);updateSlideVisual(slide);renderInspector();};
+ $('fit').onclick=()=>{const slide=selected();if(!slide)return;if(project.layer==='overlay'){applyOverlayTransform(slide,{...slide.overlay,scale:overlayBaseScale()});}else fitMedia(slide);updateSlideVisual(slide);renderInspector();};
+ $('center').onclick=()=>{const slide=selected();if(!slide)return;if(project.layer==='overlay'){const t=getOverlayTransform(slide);applyOverlayTransform(slide,{...slide.overlay,x:Math.round((CONFIG.SLIDE_WIDTH-t.width)/2),y:Math.round((CONFIG.SLIDE_HEIGHT-t.height)/2)});}else centerMedia(slide);updateSlideVisual(slide);renderInspector();};
+ $('reset').onclick=()=>{const slide=selected();if(!slide)return;if(project.layer==='overlay'){resetOverlay(slide);applyOverlayTransform(slide,slide.overlay);}else fitMedia(slide);updateSlideVisual(slide);renderInspector();};
 $('remove').onclick=()=>{const slide=selected();if(slide)removeSlide(slide);};
 $('overlay-enabled').onchange=e=>{const slide=selected();if(!slide)return;slide.overlay.enabled=e.target.checked;updateSlideVisual(slide);scheduleProjectSave();};
 $('trim-start').oninput=e=>updateTrim('start',e.target.value);
@@ -692,8 +751,8 @@ document.addEventListener('keydown',e=>{
     const t=project.layer==='overlay'&&project.overlaySource?slide.overlay:slide.transform,n=e.shiftKey?10:1;
     t.x+=e.key==='ArrowLeft'?-n:e.key==='ArrowRight'?n:0;
     t.y+=e.key==='ArrowUp'?-n:e.key==='ArrowDown'?n:0;
-    if(t===slide.transform)bounds(t,slide.sourceWidth,slide.sourceHeight);
-    updateSlideVisual(slide);
+    if(t===slide.transform){bounds(t,slide.sourceWidth,slide.sourceHeight);updateSlideVisual(slide);}
+    else applyOverlayTransform(slide,t);
     renderInspector();
   }else if(e.code==='Space'&&slide.type==='video'){e.preventDefault();$('play-video').click();}
 });

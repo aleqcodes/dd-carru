@@ -8,6 +8,10 @@ O editor aceita imagens JPG/JPEG, PNG, WebP, HEIC e HEIF como slides. Na primeir
 
 Overlays continuam aceitando PNG, JPG/JPEG e WebP.
 
+## Posição e tamanho do overlay
+
+Selecione a camada **Overlay** para arrastar sua imagem no slide, ou informe valores de X, Y, largura e altura em pixels do quadro exportado (1080 × 1350). Largura e altura preservam a proporção da imagem. Marque **Editar todos os slides juntos** para aplicar cada alteração de posição/tamanho a todos os slides; desmarque para ajustar somente o slide selecionado. A visibilidade do overlay continua configurável por slide.
+
 ## Qualidade de vídeo
 
 O encode de navegador usa H.264 `libx264`, preset `veryfast`, CRF 18 e áudio AAC a 128 kbit/s. CRF 18 prioriza qualidade visual; os MP4s podem ficar maiores e demorar mais que o perfil anterior.
