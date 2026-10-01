@@ -21,7 +21,7 @@ main{min-width:0;display:flex;flex-direction:column;background:radial-gradient(e
   <div class="header-actions"><button id="add-media">＋ Adicionar mídias</button><button id="add-overlay">◇ Adicionar overlay</button><span id="save-indicator" class="save-indicator" role="status">Salvamento local…</span><span class="separator"></span><button id="export-zip" class="primary">↓ Exportar carrossel</button></div>
 </header>
 <div class="app">
-<nav aria-label="Ferramentas"><div><div class="nav-heading"><b>Projeto</b><span id="slide-count" class="count mono">00 / 10</span></div><div class="nav-actions"><button id="nav-media"><span>＋</span>Mídias</button><button id="nav-overlay"><span>◇</span>Overlay</button><button id="export-separate"><span>↓</span>Baixar separadamente</button></div></div><div class="nav-note"><strong>Como funciona</strong><p>Arraste mídias para ajustar o enquadramento. Use o controle de ordem sob cada slide para reorganizar. Escolha a camada no painel de edição.</p></div><div class="nav-footer">1080 × 1350 PX · ATÉ 10 SLIDES<br>Os arquivos permanecem neste navegador.</div></nav>
+<nav aria-label="Ferramentas"><div><div class="nav-heading"><b>Projeto</b><span id="slide-count" class="count mono">00 / 10</span></div><div class="nav-actions"><button id="nav-media"><span>＋</span>Mídias</button><button id="nav-overlay"><span>◇</span>Overlay</button><button id="export-separate"><span>↓</span>Baixar separadamente</button></div></div><div class="nav-note"><strong>Como funciona</strong><p>Arraste mídias para ajustar o enquadramento. Use o controle de ordem sob cada slide para reorganizar. Escolha a camada no painel de edição.</p></div><div class="nav-footer">1080 × 1350 PX · ATÉ 10 SLIDES<br>Os arquivos permanecem neste navegador.<br>GPU local opcional: consulte README.md.</div></nav>
 <main><div class="workspace-head"><div><div class="eyebrow">ÁREA DE TRABALHO / 01</div><h1>Seu carrossel</h1><p>Organize, ajuste e exporte cada cena.</p></div><div class="workspace-tools"><span class="eyebrow">GUIAS</span><button id="toggle-safe" aria-pressed="false" title="Exibir área segura">Área segura</button></div></div><div class="workspace"><div id="rail" class="rail" aria-label="Slides do carrossel"></div></div><div class="workspace-bottom"><span>ARRASTE A IMAGEM PARA REPOSICIONAR · USE O CONTROLE PARA MUDAR A ORDEM</span><span class="mono">FORMATO 4:5</span></div></main>
 <aside aria-label="Controles do slide"><div class="inspector-heading"><div><div class="eyebrow">PAINEL DE EDIÇÃO</div><h2 id="inspector-title">Nenhum slide</h2></div><span id="inspector-type" class="count">—</span></div><p id="no-selection" class="no-selection">Adicione imagens ou vídeos para começar. Selecione um slide para editar suas camadas.</p><div id="inspector-body" class="inspector-body hidden"><p id="source-name" class="file-name"></p><div class="section"><div class="section-title"><strong>Camada ativa</strong></div><div class="segmented"><button id="layer-media" class="selected">Mídia</button><button id="layer-overlay">Overlay</button></div><p id="layer-hint" class="hint">Arraste no quadro para mover a mídia.</p></div><div class="section"><div class="section-title"><strong>Transformação</strong><span id="zoom-label" class="mono">1.00×</span></div><label class="field" for="zoom">Zoom</label><div class="range-row"><button id="zoom-minus" class="icon-btn" aria-label="Diminuir zoom">−</button><input id="zoom" type="range" min="1" max="5" step="0.01" value="1"><button id="zoom-plus" class="icon-btn" aria-label="Aumentar zoom">＋</button></div><p id="position" class="hint mono">X 0 · Y 0</p><div class="button-grid"><button id="fit">Preencher</button><button id="center">Centralizar</button><button id="reset">Resetar</button><button id="remove" class="danger">Remover slide</button></div></div><div id="overlay-section" class="section"><div class="section-title"><strong>Overlay</strong></div><label class="checkbox"><input id="overlay-enabled" type="checkbox"> Visível neste slide</label><p id="overlay-note" class="hint">Adicione uma imagem de overlay para usá-la em todos os slides.</p></div><div id="video-section" class="section" hidden><div class="section-title"><strong>Vídeo</strong><span id="video-duration" class="mono"></span></div><div class="video-actions"><button id="play-video" aria-label="Reproduzir ou pausar">▶ Reproduzir</button><span id="video-time" class="mono">00:00 / 00:00</span></div><label class="field" for="trim-start">Início <output id="start-label" class="mono"></output></label><input id="trim-start" type="range" style="width:100%"><label class="field" for="trim-end">Fim <output id="end-label" class="mono"></output></label><input id="trim-end" type="range" style="width:100%"><div id="trim-summary" class="trim-summary mono"></div><button id="preview-trim">▶ Preview do corte</button><p class="hint">A exportação de vídeos carrega o FFmpeg.wasm pela internet somente quando solicitada. Vídeos grandes podem exceder a memória do navegador.</p></div></div></aside>
 </div>
@@ -383,7 +383,86 @@ async function getFFmpeg(){
   }catch(error){ffmpeg.terminate();throw error;}
   finally{for(const url of urls)URL.revokeObjectURL(url);}
 }
-async function renderVideoSlide(slide,ffmpeg,overlayImage,onProgress){
+async function getLocalRenderer(){
+  if(location.protocol!=='http:'||!['localhost','127.0.0.1'].includes(location.hostname))return null;
+  try{
+    const response=await fetch('/api/capabilities',{cache:'no-store'});
+    if(!response.ok)return null;
+    const capabilities=await response.json();
+    return capabilities.available?capabilities:null;
+  }catch{return null;}
+}
+async function renderWithLocalRenderer(slide,overlayImage,onProgress){
+  const transform=getMediaTransform(slide),overlayEnabled=!!(project.overlaySource&&slide.overlay.enabled);
+  const options={
+    extension:slide.file.name.split('.').pop().toLowerCase(),
+    trimStart:slide.video.trimStart,trimEnd:slide.video.trimEnd,
+    width:transform.width,height:transform.height,cropX:transform.cropX,cropY:transform.cropY,
+    overlay:null
+  };
+  let overlayBlob=new Blob();
+  if(overlayEnabled){
+    overlayBlob=await canvasBlob((()=>{
+      const canvas=document.createElement('canvas');
+      canvas.width=project.overlaySource.width;
+      canvas.height=project.overlaySource.height;
+      canvas.getContext('2d').drawImage(overlayImage,0,0);
+      return canvas;
+    })());
+    const transform=getOverlayTransform(slide);
+    options.overlay={width:transform.width,height:transform.height,x:transform.x,y:transform.y};
+  }
+  onProgress({stage:'reading',native:true});
+  const response=await fetch('/api/jobs',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/octet-stream',
+      'X-Source-Size':String(slide.file.size),
+      'X-Overlay-Size':String(overlayBlob.size),
+      'X-Render-Options':encodeURIComponent(JSON.stringify(options))
+    },
+    body:new Blob([slide.file,overlayBlob],{type:'application/octet-stream'})
+  });
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(payload.error||`Serviço local respondeu ${response.status}.`);
+  const jobId=payload.id;
+  try{
+    let started=false;
+    while(true){
+      const statusResponse=await fetch(`/api/jobs/${jobId}`,{cache:'no-store'});
+      const status=await statusResponse.json().catch(()=>({}));
+      if(!statusResponse.ok)throw new Error(status.error||'Perdeu-se a conexão com o render local.');
+      if(status.phase==='error')throw new Error(status.error||'O FFmpeg local não conseguiu renderizar o vídeo.');
+      if(status.phase==='done'){
+        const result=await fetch(`/api/jobs/${jobId}/result`);
+        if(!result.ok)throw new Error('O FFmpeg terminou, mas o MP4 não pôde ser recuperado.');
+        onProgress({stage:'engine',engine:status.engine});
+        return await result.blob();
+      }
+      if(!started){
+        onProgress({stage:'encoding-start',native:true});
+        started=true;
+      }
+      onProgress({
+        stage:'encoding',fraction:status.fraction||0,native:true,
+        detail:status.message||'FFmpeg local está codificando…',
+        engine:status.encoder||null
+      });
+      await new Promise(resolve=>setTimeout(resolve,400));
+    }
+  }catch(error){
+    await fetch(`/api/jobs/${jobId}`,{method:'DELETE'}).catch(()=>{});
+    throw error;
+  }
+}
+async function renderVideoSlide(slide,ffmpeg,overlayImage,onProgress,localRenderer){
+  if(localRenderer){
+    try{return await renderWithLocalRenderer(slide,overlayImage,onProgress);}
+    catch(error){
+      notify(`FFmpeg local falhou (${error.message}); tentando FFmpeg.wasm pela CPU.`,true);
+      return renderVideoSlide(slide,ffmpeg||await getFFmpeg(),overlayImage,onProgress,null);
+    }
+  }
   const input=`input_${slide.id}.${slide.file.name.split('.').pop().toLowerCase()}`,output=`output_${slide.id}.mp4`,overlayPath=`overlay_${slide.id}.png`;
   const paths=[input,output];
   let listener;
@@ -409,7 +488,7 @@ async function renderVideoSlide(slide,ffmpeg,overlayImage,onProgress){
     ffmpeg.on('progress',listener);
     onProgress({stage:'encoding-start'});
     await new Promise(resolve=>setTimeout(resolve,0));
-    args.push('-filter_complex',filter,'-map',label,'-map','0:a?','-t',(slide.video.trimEnd-slide.video.trimStart).toFixed(3),'-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-crf','23','-c:a','aac','-b:a','128k','-movflags','+faststart',output);
+    args.push('-filter_complex',filter,'-map',label,'-map','0:a?','-t',(slide.video.trimEnd-slide.video.trimStart).toFixed(3),'-c:v','libx264','-preset','veryfast','-pix_fmt','yuv420p','-crf','18','-c:a','aac','-b:a','128k','-movflags','+faststart',output);
     const exit=await ffmpeg.exec(args);
     if(exit!==0)throw new Error(`FFmpeg terminou com código ${exit} no slide ${project.slides.indexOf(slide)+1}.`);
     return new Blob([await ffmpeg.readFile(output)],{type:'video/mp4'});
@@ -496,34 +575,38 @@ async function exportProject(separate=false){
   stopVideos();
   $('export-zip').disabled=true;
   $('export-separate').disabled=true;
-  const files=[],total=project.slides.length;
+  const files=[],total=project.slides.length,renderEngines=new Set();
   let completed=0;
   try{
     const overlayImage=project.overlaySource?await decodeImage(project.overlaySource.url):null;
-    const ffmpeg=project.slides.some(slide=>slide.type==='video')?await getFFmpeg():null;
+    const hasVideo=project.slides.some(slide=>slide.type==='video');
+    const localRenderer=hasVideo?await getLocalRenderer():null;
+    const ffmpeg=hasVideo&&!localRenderer?await getFFmpeg():null;
     for(let i=0;i<total;i++){
       const slide=project.slides[i],name=`${i+1}.${slide.type==='video'?'mp4':'png'}`;
       let blob;
       if(slide.type==='video'){
         let startedAt=0;
-        blob=await renderVideoSlide(slide,ffmpeg,overlayImage,({stage,fraction=0})=>{
+        blob=await renderVideoSlide(slide,ffmpeg,overlayImage,({stage,fraction=0,native=false,detail,engine})=>{
+          if(stage==='engine'){if(engine)renderEngines.add(engine);return;}
           if(stage==='reading'){
             startedAt=performance.now();
-            progress(`Slide ${i+1}: carregando vídeo na memória…`,i,total,0,`${formatBytes(slide.file.size)} · preparando entrada do FFmpeg`);
+            progress(`Slide ${i+1}: ${native?'enviando vídeo ao FFmpeg local…':'carregando vídeo na memória…'}`,i,total,0,`${formatBytes(slide.file.size)} · ${native?'transferência local':'preparando entrada do FFmpeg'}`);
             return;
           }
           if(stage==='encoding-start'){
             startedAt=performance.now();
-            progress(`Slide ${i+1}: iniciando codificação MP4…`,i,total,0,'FFmpeg está processando no worker; a página deve continuar respondendo.');
+            progress(`Slide ${i+1}: iniciando codificação MP4…`,i,total,0,native?'FFmpeg do computador tenta NVIDIA, AMD e depois CPU.':'FFmpeg está processando no worker; a página deve continuar respondendo.');
             return;
           }
           const elapsed=(performance.now()-startedAt)/1000;
           const duration=slide.video.trimEnd-slide.video.trimStart;
           const remaining=fraction>0?elapsed*(1-fraction)/fraction:null;
           const eta=remaining===null?'':` · ~${clock(Math.ceil(remaining))} restantes`;
-          const detail=`Codificação ${Math.round(fraction*100)}% · vídeo ${duration.toFixed(1)} s · ${clock(elapsed)} transcorridos${eta}`;
-          progress(`Slide ${i+1}: codificando MP4…`,i,total,fraction,detail);
-        });
+          const report=detail?`${detail} · `:engine?`${engine} · `:'';
+          const detailText=`${report}codificação ${Math.round(fraction*100)}% · vídeo ${duration.toFixed(1)} s · ${clock(elapsed)} transcorridos${eta}`;
+          progress(`Slide ${i+1}: codificando MP4…`,i,total,fraction,detailText);
+        },localRenderer);
       }else{
         progress(`Slide ${i+1}: renderizando imagem…`,i,total);
         blob=await renderImageSlide(slide,overlayImage);
@@ -536,7 +619,8 @@ async function exportProject(separate=false){
     }
     if(separate){
       showIndividualDownloads(files);
-      notify(`${files.length} arquivo${files.length===1?'':'s'} pronto${files.length===1?'':'s'} para baixar.`);
+      const rendererNote=renderEngines.size?` Renderizador: ${[...renderEngines].join(', ')}.`:'';
+      notify(`${files.length} arquivo${files.length===1?'':'s'} pronto${files.length===1?'':'s'} para baixar.${rendererNote}`);
     }else{
       const totalBytes=files.reduce((sum,file)=>sum+file.bytes.length,0);
       progress('Montando ZIP sem comprimir novamente as mídias…',total-1,total,.99,`${formatBytes(totalBytes)} de arquivos · gerando checksum para o ZIP`);
@@ -544,7 +628,8 @@ async function exportProject(separate=false){
         progress('Finalizando carousel.zip…',total-1,total,.99,`${name} · checksum ${formatBytes(done)} / ${formatBytes(bytes)}`);
       });
       download(archive,'carousel.zip');
-      notify(`${total} slide${total===1?'':'s'} exportado${total===1?'':'s'} com sucesso.`);
+      const rendererNote=renderEngines.size?` Renderizador: ${[...renderEngines].join(', ')}.`:'';
+      notify(`${total} slide${total===1?'':'s'} exportado${total===1?'':'s'} com sucesso.${rendererNote}`);
     }
   }catch(e){
     console.error(e);
@@ -601,6 +686,12 @@ window.addEventListener('resize',()=>project.slides.forEach(updateSlideVisual));
 window.addEventListener('beforeunload',()=>{
   for(const slide of project.slides)URL.revokeObjectURL(slide.url);
   if(project.overlaySource)URL.revokeObjectURL(project.overlaySource.url);
+});
+getLocalRenderer().then(nativeRenderer=>{
+  const help=$('video-section').querySelector('.hint');
+  if(help)help.textContent=nativeRenderer
+    ?'Render local tenta NVIDIA (NVENC), AMD (AMF) e CPU; qualidade H.264 18. Sem helper, o navegador usa FFmpeg.wasm pela CPU.'
+    :'Sem helper local, FFmpeg.wasm usa a CPU. Qualidade H.264 18; vídeos grandes podem levar mais tempo e gerar arquivos maiores.';
 });
 initializeLocalProject();
 </script>
